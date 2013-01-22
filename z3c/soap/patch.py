@@ -13,13 +13,62 @@
 ##############################################################################
 import sys
 from zExceptions import Redirect
-from ZPublisher.mapply import mapply
+import zope.publisher.publish
+from ZPublisher.mapply import default_missing_name, default_handle_class
 from ZPublisher.Publish import (call_object, missing_name, dont_publish_class,
                                 get_module_info, Retry)
 from zope.publisher.browser import setDefaultSkin
 from zope.security.management import newInteraction, endInteraction
 from z3c.soap.interfaces import ISOAPRequest
 from z3c.soap.soap import SOAPResponse
+
+
+def mapply(object, positional=(), keyword={},
+           debug=None, maybe=None,
+           missing_name=default_missing_name,
+           handle_class=default_handle_class,
+           context=None, bind=0,
+           ):
+
+    if hasattr(object,'__bases__'):
+        f, names, defaults = handle_class(object, context)
+    else:
+        try:
+            f, count = zope.publisher.publish.unwrapMethod(object)
+        except TypeError:
+            if maybe:
+                return object
+            raise
+        code = getattr(f, 'orig_func_code', f.func_code)
+        defaults = f.func_defaults
+        names = code.co_varnames[count:code.co_argcount]
+
+    nargs=len(names)
+    if positional:
+        positional=list(positional)
+        if bind and nargs and names[0]=='self':
+            positional.insert(0, missing_name('self', context))
+        if len(positional) > nargs: raise TypeError, 'too many arguments'
+        args=positional
+    else:
+        if bind and nargs and names[0]=='self':
+            args=[missing_name('self', context)]
+        else:
+            args=[]
+
+    get=keyword.get
+    nrequired=len(names) - (len(defaults or ()))
+    for index in range(len(args), len(names)):
+        name=names[index]
+        v=get(name, args)
+        if v is args:
+            if index < nrequired: v=missing_name(name, context)
+            else: v=defaults[index-nrequired]
+        args.append(v)
+
+    args=tuple(args)
+    if debug is not None: return debug(object,args,context)
+    else: return object(*args)
 
 
 def publish(request, module_name, after_list, debug=0,
